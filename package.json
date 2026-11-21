@@ -1,0 +1,25 @@
+{
+  "name": "everyapp-clone-kit",
+  "version": "0.1.0",
+  "description": "Get an oss.new app clone onto your own EveryApp Gateway.",
+  "type": "module",
+  "bin": {
+    "everyapp-clone-kit": "prepare.mjs"
+  },
+  "files": [
+    "prepare.mjs",
+    "templates",
+    "llms.txt",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "author": "founder.chat <gabe@founder.chat> (https://founder.chat)",
+  "homepage": "https://github.com/gfsaaser24/everyapp-clone-kit",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gfsaaser24/everyapp-clone-kit.git"
+  }
+}

@@ -1,0 +1,230 @@
+# everyapp-clone-kit
+
+> Instructions for a coding agent. Goal: take an app repository that oss.new pushed to
+> the person's GitHub ("Clone to your GitHub") and get it running on the person's own
+> EveryApp Gateway. Follow the steps in order. Each step has a check. Do not go on
+> until the check passes.
+
+Kit files:
+- https://raw.githubusercontent.com/gfsaaser24/everyapp-clone-kit/main/prepare.mjs
+- https://raw.githubusercontent.com/gfsaaser24/everyapp-clone-kit/main/templates/release.yml
+- Or run it without cloning: npx github:gfsaaser24/everyapp-clone-kit <app-dir>
+
+EveryApp's own docs for agents: https://everyapp.com/llms.txt
+(error codes: https://everyapp.com/docs/agent/errors).
+
+## Why the cloned repository does not install as it is
+
+oss.new builds apps next to an EveryApp checkout. So the cloned repository has three problems:
+
+1. package.json points the two EveryApp packages at a folder that is not there:
+   "@every-app/sdk": "link:../every-app/packages/sdk"
+   "everyapp": "link:../every-app/packages/cli"
+   The lockfile has the same links. pnpm install leaves broken links, and then
+   `everyapp: command not found`.
+2. It has no Release workflow and no GitHub release. `everyapp install <repo url>`
+   downloads everyapp-release.tar.gz from the latest GitHub release and never builds
+   source, so it fails with NO_RELEASE.
+3. Its README says `pnpm install && pnpm run deploy` and does not mention the missing folder.
+
+The fix: pin both packages to one exact npm version, refresh the lockfile, add the
+Release workflow, push. Then one command installs it. prepare.mjs does the file changes.
+
+## What you need before you start
+
+- The repository URL, like https://github.com/<person>/<app>.
+- Node 22 or newer, pnpm, git. Check: `node --version`, `pnpm --version`, `git --version`.
+  No pnpm? Run `corepack enable` (or `npm i -g pnpm`).
+- Push access to the repository (to push the fix). Check: `git push --dry-run` after cloning.
+- The person's Cloudflare account already has an EveryApp Gateway. If it has none, stop and
+  tell the person: they set one up first with `npx everyapp setup` (that is their choice, not yours).
+
+## Step 1: Clone the repository
+
+    git clone https://github.com/<person>/<app>.git
+    cd <app>
+
+Check: the folder has `everyapp.config.ts` and `package.json`.
+If not: this is not an EveryApp app. Stop and tell the person.
+
+Check the default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`.
+The workflow releases on pushes to `main`. If the branch has another name, you will add
+it under `on.push.branches` in step 3.
+
+## Step 2: Pick the EveryApp version
+
+The app's @every-app/sdk must be the same version as the everyapp CLI that deploys it
+(otherwise SDK_VERSION_MISMATCH). Use the version that matches the person's Gateway.
+
+- Default: npm's latest. Check: `npm view everyapp version` and `npm view @every-app/sdk version`.
+  Both must print the same version.
+- If the person already manages their Gateway with a CLI, ask which. Run `everyapp status`
+  with that CLI. The "Release" line must say it matches this CLI (or is the same version).
+  - "newer available" (GATEWAY_OUTDATED as info): fine. The person can `everyapp update` later.
+  - "behind", or a later command fails with GATEWAY_DOWNGRADE ("... is older than the live
+    one"): the Gateway was built from an EveryApp checkout that is newer than this CLI.
+    Manage it with that checkout's CLI (`pnpm everyapp ...` inside the checkout, or
+    `node <checkout>/packages/cli/bin/everyapp.js ...`). Never pass `--downgrade`. Never run
+    `everyapp setup` on an existing Gateway to "fix" this. Ask the person if you are unsure.
+- To pin a version other than latest, pass `--version <x.y.z>` in step 3. Both packages must
+  exist at that version on npm.
+
+## Step 3: Prepare the repository
+
+From the app folder (or give the path):
+
+    node prepare.mjs . --dry-run     # shows what would change, changes nothing
+    node prepare.mjs .               # makes the changes and runs pnpm install
+
+Add `--version <x.y.z>` to pin a version other than npm's latest.
+Add `--no-install` to skip pnpm install (then run `pnpm install` yourself).
+
+What it does:
+- Sets "@every-app/sdk" and "everyapp" to the exact version in every dependency section they
+  are in (link:, file:, workspace: and ranges all become the exact version).
+- If pnpm-workspace.yaml sets minimumReleaseAge, adds `everyapp` and `'@every-app/*'` to
+  minimumReleaseAgeExclude, so a fresh release is not held back.
+- Copies templates/release.yml to .github/workflows/release.yml. It never overwrites a
+  different existing file; it warns instead.
+- Makes sure .gitignore has `everyapp-release.tar.gz`.
+- Runs pnpm install, which rewrites pnpm-lock.yaml.
+- Prints what changed, warnings, and the next commands. Running it again changes nothing.
+
+Checks:
+- It ends with "Changed:" or "No changes:" and exit code 0.
+- `grep -n "link:\|file:" package.json pnpm-lock.yaml | grep -i every` prints nothing.
+- `pnpm exec everyapp --version` prints the pinned version.
+- `pnpm install --frozen-lockfile` succeeds (this is what the workflow runs).
+
+If it fails:
+- "has no everyapp.config.ts": wrong folder.
+- "is not on npm": pick a version both packages have (`npm view everyapp versions`).
+- "pnpm install failed": read pnpm's output above it and fix that. A minimumReleaseAge error
+  means the exclude list is wrong; check pnpm-workspace.yaml by hand.
+- A "Look at:" warning: act on it. Common ones:
+  - release.yml already exists and differs: open it. It must run
+    `pnpm exec everyapp release --publish` and have `permissions: contents: write`.
+    If it does not, replace it with templates/release.yml.
+  - The default branch is not main: add that branch under `on.push.branches` in the workflow.
+  - A `link:` override in pnpm-workspace.yaml or package.json: remove it, then run prepare again.
+  - vendor/ tarballs, or a committed everyapp-release.tar.gz: delete them (`git rm`).
+
+Without prepare.mjs, do the same by hand:
+
+    pnpm add @every-app/sdk@<version> && pnpm add -D everyapp@<version>   # exact, no ^ or ~
+    mkdir -p .github/workflows && cp <kit>/templates/release.yml .github/workflows/release.yml
+
+Then check package.json lists both at exactly <version>, and .gitignore has
+everyapp-release.tar.gz.
+
+## Step 4: Check that the release builds (local, deploys nothing)
+
+    NODE_OPTIONS=--max-old-space-size=4096 pnpm exec everyapp release
+
+Check: it ends with "Packed <app> <version>" and writes ./everyapp-release.tar.gz.
+Check: `git status --short` does not list everyapp-release.tar.gz (it is ignored).
+If it fails: the message names the problem (a build error, APP_POLICY, SCHEMA_DRIFT: run
+`pnpm db:generate`). Fix it before you push, or the workflow fails the same way.
+RELEASE_MIGRATIONS_UNSUPPORTED (a Postgres app) means it cannot be released: use path B.
+
+## Step 5: Commit and push
+
+    git add package.json pnpm-lock.yaml .gitignore .github/workflows/release.yml
+    git add pnpm-workspace.yaml    # only if prepare changed it
+    git commit -m "Pin EveryApp <version> and add the Release workflow"
+    git push
+
+Never commit `link:` or `file:` specifiers, vendored .tgz files, or everyapp-release.tar.gz.
+Push to the default branch. If you can't push there, open a pull request and ask the person
+to merge it: the release is published only from the default branch.
+
+Check: the push succeeded.
+
+## Step 6: Wait for the GitHub release
+
+The Release workflow runs on the push. It runs `pnpm exec everyapp release --publish` and
+publishes a GitHub release tagged v<package.json version> with everyapp-release.tar.gz.
+
+Check (with gh): `gh run list --workflow Release --limit 1` shows success, then
+`gh release view --json tagName,assets` lists everyapp-release.tar.gz.
+Without gh: open https://github.com/<person>/<app>/actions and .../releases.
+
+If it fails:
+- No run at all: GitHub Actions is off for the repository. The person turns it on under
+  Settings > Actions > General, then you push again (an empty commit is fine:
+  `git commit --allow-empty -m "Run the Release workflow" && git push`).
+- "Resource not accessible by integration" or 403 on publish: the job needs
+  `contents: write`. The template sets it. If the repository or organization limits the
+  workflow token to read-only, the person allows read and write under
+  Settings > Actions > General > Workflow permissions.
+- `pnpm install --frozen-lockfile` fails: the lockfile was not committed after prepare.
+  Run `pnpm install`, commit pnpm-lock.yaml, push.
+- The build fails: same as step 4. Fix, commit, push.
+- The tag v<version> was taken already: the CLI publishes v<version>-<date>-<sha> instead.
+  That is fine.
+
+## Step 7: Install it on the person's Gateway
+
+Path A (the release, recommended):
+
+    everyapp install https://github.com/<person>/<app>
+
+Run it with the CLI that matches the Gateway (step 2). In the app folder,
+`pnpm exec everyapp install https://github.com/<person>/<app>` uses the pinned version.
+It needs the person's Cloudflare login (`everyapp login`). The install creates the
+app's D1, R2 and other resources.
+
+Path B (no release, deploy from the source):
+
+    pnpm run deploy          # the same as: pnpm exec everyapp deploy
+
+Run it from the app folder after step 3. Use it when the repository is private (anonymous
+downloads of a private repository's release answer NO_RELEASE), when Actions is off, or for
+a Postgres app.
+
+Path C (from the browser, no terminal): once the release exists, an owner or admin can open
+https://<gateway>/install?source=https://github.com/<person>/<app> on their Gateway. This
+works only if browser installs are on (`everyapp deploy-token add`, once).
+
+If it fails:
+- NO_RELEASE: step 6 is not done, or the repository is private. Finish step 6, or use path B.
+- R2_NOT_ENABLED: R2 was never turned on in this Cloudflare account. The person enables it
+  once in the dashboard (R2 Object Storage > Get started). Then run the same command again.
+- SDK_VERSION_MISMATCH: the CLI you ran is not the pinned version. Use `pnpm exec everyapp`
+  from the app folder, or re-pin with `node prepare.mjs . --version <cli version>`.
+- GATEWAY_DOWNGRADE: you are using a CLI older than the Gateway. See step 2. Do not pass
+  `--downgrade` and do not run `everyapp setup`.
+- GATEWAY_NOT_FOUND: the login sees no Gateway. Log in to the right account, or pass
+  `--account-id`.
+- Anything else: look the code up at https://everyapp.com/docs/agent/errors. Every step is
+  safe to rerun.
+
+## Step 8: Check it is live
+
+    everyapp status
+
+Check: the app's row says `live` (or `live on first visit`, or `waiting for certificate`,
+which settles by itself in a few minutes).
+If it says `needs setup`: the app has a required setting. The person runs
+`everyapp configure <app>` (it asks for values, so it needs them at a terminal).
+
+## Step 9: Tell the person
+
+Report, in short sentences:
+- The app URL, and whether it is live or still waiting for a certificate.
+- What you changed in their repository (the commit: pinned version, workflow added) and
+  that it is pushed.
+- The release tag, if path A.
+- How to update later: push to the default branch, then run
+  `everyapp install https://github.com/<person>/<app>` again.
+- Anything they must do themselves: enable R2, turn on Actions, `everyapp configure <app>`,
+  merge your pull request.
+
+## Rules
+
+- Do not run `everyapp setup` on an existing Gateway, and never pass `--downgrade`.
+- Do not vendor the SDK or CLI, and do not commit `link:` or `file:` specifiers.
+- Do not commit everyapp-release.tar.gz.
+- Pin exact versions, not ranges. Both packages get the same version.
+- Ask the person before anything that deletes data (`--purge`, Durable Object or Workflow
+  deletion flags).
