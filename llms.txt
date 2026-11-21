@@ -127,6 +127,26 @@ If it fails: the message names the problem (a build error, APP_POLICY, SCHEMA_DR
 `pnpm db:generate`). Fix it before you push, or the workflow fails the same way.
 RELEASE_MIGRATIONS_UNSUPPORTED (a Postgres app) means it cannot be released: use path B.
 
+### About the checks/ folder
+
+oss.new apps often ship a checks/ folder (authorization.mjs, behavior.mjs, persistence.mjs).
+They import oss.new's private test runtime:
+
+    import { expect } from "/home/user/oss-new/control/runtime/index.mjs";
+
+That runtime only exists on oss.new's machines. It is not on npm or in the EveryApp repo, so
+those checks cannot run anywhere else. They record what oss.new tested when it made the app.
+Do not try to run them, and do not treat them as failing tests or a reason to stop.
+
+To test the app yourself, use EveryApp's local tools:
+
+    pnpm dev                                   # the app behind a local Gateway, with local D1 and R2
+    pnpm everyapp dev token --role owner       # an identity token for scripts
+
+Send the token as the `x-everyapp-identity` header to the app port that `pnpm dev` prints.
+Use `--role member --user <email>` to test another person. Details:
+https://everyapp.com/docs/agent/dev
+
 ## Step 5: Commit and push
 
     git add package.json pnpm-lock.yaml .gitignore .github/workflows/release.yml
@@ -225,6 +245,7 @@ Report, in short sentences:
 - Do not run `everyapp setup` on an existing Gateway, and never pass `--downgrade`.
 - Do not vendor the SDK or CLI, and do not commit `link:` or `file:` specifiers.
 - Do not commit everyapp-release.tar.gz.
+- Do not try to run checks/ when it imports /home/user/oss-new/...: that runtime is private to oss.new.
 - Pin exact versions, not ranges. Both packages get the same version.
 - Ask the person before anything that deletes data (`--purge`, Durable Object or Workflow
   deletion flags).

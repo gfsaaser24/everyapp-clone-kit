@@ -98,6 +98,7 @@ for (const name of [SDK, CLI]) {
 
 const changes = []; // what we changed, for the summary
 const warnings = []; // what the person or agent must look at
+const notes = []; // good to know, nothing to fix
 
 // 1. package.json: pin both packages, in whichever section they already are.
 const packageJsonText = fs.readFileSync(packageJsonPath, "utf8");
@@ -220,7 +221,23 @@ if (fs.existsSync(vendorDir) && fs.readdirSync(vendorDir).some((name) => /every-
   warnings.push("vendor/ holds EveryApp tarballs. Delete them; the app uses the npm packages now.");
 }
 
-// 6. Does the lockfile and node_modules need a fresh install?
+// 6. oss.new's own checks: they import oss.new's private test runtime, which only
+// exists on oss.new's machines, so they can't run anywhere else.
+const checksDir = path.join(appDir, "checks");
+const usesOssRuntime =
+  fs.existsSync(checksDir) &&
+  fs
+    .readdirSync(checksDir)
+    .filter((name) => /\.m?[jt]s$/.test(name))
+    .some((name) => fs.readFileSync(path.join(checksDir, name), "utf8").includes("oss-new/control/runtime"));
+if (usesOssRuntime) {
+  notes.push(
+    "checks/ imports oss.new's private test runtime (/home/user/oss-new/control/runtime), which isn't published. " +
+      "Those checks can't run here and aren't a reason to stop. To test, use `pnpm dev` with `pnpm everyapp dev token`.",
+  );
+}
+
+// 7. Does the lockfile and node_modules need a fresh install?
 const lockPath = path.join(appDir, "pnpm-lock.yaml");
 const lockText = fs.existsSync(lockPath) ? fs.readFileSync(lockPath, "utf8") : "";
 const lockIsPinned = lockSpecifier(lockText, SDK) === version && lockSpecifier(lockText, CLI) === version;
@@ -312,6 +329,10 @@ if (needsInstall && (dryRun || skipInstall)) {
 if (warnings.length > 0) {
   console.log("\nLook at:");
   for (const warning of warnings) console.log(`  ! ${warning}`);
+}
+if (notes.length > 0) {
+  console.log("\nGood to know:");
+  for (const note of notes) console.log(`  - ${note}`);
 }
 
 // Files this kit touches that git sees as changed: those still need a commit.
